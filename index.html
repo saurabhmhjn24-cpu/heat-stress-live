@@ -200,6 +200,7 @@ button {
     <select id="sourceSelect" onchange="onSourceChange()">
       <option value="auto" selected>My current location</option>
       <option value="manual">Manual coordinates</option>
+      <option value="manualdata">Enter temperature &amp; humidity</option>
       <option value="ambient">Shakurbasti weather station</option>
     </select>
 
@@ -207,6 +208,13 @@ button {
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
         <input type="text" id="manualLat" placeholder="Latitude e.g. 28.66" style="flex:1; min-width:120px;">
         <input type="text" id="manualLon" placeholder="Longitude e.g. 77.10" style="flex:1; min-width:120px;">
+      </div>
+    </div>
+
+    <div class="subfield hidden" id="manualDataFields">
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <input type="text" id="manualTemp" placeholder="Temperature °C e.g. 34.5" style="flex:1; min-width:120px;">
+        <input type="text" id="manualRh" placeholder="Humidity % e.g. 55" style="flex:1; min-width:120px;">
       </div>
     </div>
 
@@ -347,6 +355,7 @@ function setStatus(text, isError) {
 function onSourceChange() {
   const source = document.getElementById('sourceSelect').value;
   document.getElementById('manualFields').classList.toggle('hidden', source !== 'manual');
+  document.getElementById('manualDataFields').classList.toggle('hidden', source !== 'manualdata');
   // ambientFields (worker URL + hint) stays hidden always — it's informational only
   // and fetchAndPlot() reads DEFAULT_WORKER_URL directly, not this field.
 }
@@ -428,6 +437,14 @@ async function fetchAndPlot() {
       if (isNaN(lat) || isNaN(lon)) throw new Error('Enter valid latitude and longitude.');
       reading = await fetchOpenMeteo(lat, lon);
       locationLabel = await reverseGeocode(lat, lon);
+    } else if (source === 'manualdata') {
+      // No API call at all — just read the two typed-in values directly.
+      const temp = parseFloat(document.getElementById('manualTemp').value);
+      const rh = parseFloat(document.getElementById('manualRh').value);
+      if (isNaN(temp) || isNaN(rh)) throw new Error('Enter both a temperature (°C) and a humidity (%) value.');
+      if (rh < 0 || rh > 100) throw new Error('Humidity must be between 0 and 100%.');
+      reading = { temp_c: temp, rh: rh, time: new Date() };
+      locationLabel = 'Manually entered reading';
     } else {
       const workerUrl = DEFAULT_WORKER_URL;
       if (!workerUrl || workerUrl.includes('YOUR-SUBDOMAIN')) {
@@ -447,7 +464,8 @@ async function fetchAndPlot() {
     saveHistory(history);
     renderPlot(history);
 
-    setStatus(`Live — ${locationLabel} — ${reading.temp_c.toFixed(1)}°C, ${reading.rh.toFixed(0)}% RH (${heatZone(reading.temp_c, reading.rh)})`, false);
+    const prefix = source === 'manualdata' ? 'Recorded' : 'Live';
+    setStatus(`${prefix} — ${locationLabel} — ${reading.temp_c.toFixed(1)}°C, ${reading.rh.toFixed(0)}% RH (${heatZone(reading.temp_c, reading.rh)})`, false);
     document.getElementById('lastUpdated').textContent = 'Last updated: ' + reading.time.toLocaleString();
 
   } catch (err) {
