@@ -284,6 +284,32 @@ function symbolFor(i) {
   return symbols[i % symbols.length];
 }
 
+// ================== "Feels like" (heat index) ==================
+// Standard NWS Rothfusz regression, computed in °F/RH% then converted back to °C.
+// Below ~80°F, a simple average-based estimate is used (matches actual temperature
+// closely at that range, since heat-index effects are minimal below that point).
+function feelsLikeC(tempC, rh) {
+  const tempF = tempC * 9 / 5 + 32;
+
+  let hiF = 0.5 * (tempF + 61.0 + ((tempF - 68.0) * 1.2) + (rh * 0.094));
+
+  if ((hiF + tempF) / 2 >= 80) {
+    hiF = -42.379 + 2.04901523 * tempF + 10.14333127 * rh
+        - 0.22475541 * tempF * rh - 0.00683783 * tempF * tempF
+        - 0.05481717 * rh * rh + 0.00122874 * tempF * tempF * rh
+        + 0.00085282 * tempF * rh * rh - 0.00000199 * tempF * tempF * rh * rh;
+
+    // Standard low-humidity / high-humidity correction terms
+    if (rh < 13 && tempF >= 80 && tempF <= 112) {
+      hiF -= ((13 - rh) / 4) * Math.sqrt((17 - Math.abs(tempF - 95)) / 17);
+    } else if (rh > 85 && tempF >= 80 && tempF <= 87) {
+      hiF += ((rh - 85) / 10) * ((87 - tempF) / 5);
+    }
+  }
+
+  return (hiF - 32) * 5 / 9;
+}
+
 function buildBackground() {
   const rh = [];
   for (let x = 10; x <= 100; x += 0.25) rh.push(Math.round(x * 100) / 100);
@@ -455,17 +481,19 @@ async function fetchAndPlot() {
     }
 
     const history = loadHistory();
+    const feels_c = Math.round(feelsLikeC(reading.temp_c, reading.rh) * 10) / 10;
     history.push({
       iso: reading.time.toISOString(),
       temp_c: Math.round(reading.temp_c * 10) / 10,
       rh: Math.round(reading.rh * 10) / 10,
+      feels_c: feels_c,
       location: locationLabel
     });
     saveHistory(history);
     renderPlot(history);
 
     const prefix = source === 'manualdata' ? 'Recorded' : 'Live';
-    setStatus(`${prefix} — ${locationLabel} — ${reading.temp_c.toFixed(1)}°C, ${reading.rh.toFixed(0)}% RH (${heatZone(reading.temp_c, reading.rh)})`, false);
+    setStatus(`${prefix} — ${locationLabel} — ${reading.temp_c.toFixed(1)}°C (feels like ${feels_c.toFixed(1)}°C), ${reading.rh.toFixed(0)}% RH (${heatZone(reading.temp_c, reading.rh)})`, false);
     document.getElementById('lastUpdated').textContent = 'Last updated: ' + reading.time.toLocaleString();
 
   } catch (err) {
@@ -505,13 +533,16 @@ function renderPlot(history) {
     const zone = heatZone(r.temp_c, r.rh);
     const isLatest = i === history.length - 1;
     const label = `${formatDMY(t)} ${formatHM(t)}`;
+    // Older points saved before this feature existed won't have feels_c stored —
+    // compute it on the fly so the chart still shows it for every point.
+    const feels = r.feels_c !== undefined ? r.feels_c : Math.round(feelsLikeC(r.temp_c, r.rh) * 10) / 10;
 
     traces.push({
       x: [r.rh],
       y: [r.temp_c],
       type: 'scatter',
       mode: mobile ? 'markers' : 'markers+text', // hide inline text labels on mobile to reduce clutter; still visible on hover/tap
-      name: `${label} (${r.temp_c}°C, ${r.rh}%) - ${zone}`,
+      name: `${label} (${r.temp_c}°C, feels ${feels}°C, ${r.rh}%) - ${zone}`,
       text: [isLatest ? label + ' ★' : label],
       textposition: 'top center',
       textfont: {color:'#000', size: isLatest ? 13 : 11},
@@ -521,7 +552,7 @@ function renderPlot(history) {
         color: '#000',
         line: {width: isLatest ? 2.5 : 1.5, color:'#fff'}
       },
-      hovertemplate: `Date: ${label}<br>Location: ${r.location}<br>Temp: ${r.temp_c}°C<br>RH: ${r.rh}%<br>Zone: ${zone}<extra></extra>`
+      hovertemplate: `Date: ${label}<br>Location: ${r.location}<br>Temp: ${r.temp_c}°C<br>Feels like: ${feels}°C<br>RH: ${r.rh}%<br>Zone: ${zone}<extra></extra>`
     });
   });
 
